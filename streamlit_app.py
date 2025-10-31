@@ -552,7 +552,7 @@ def add_text_to_image(image, text):
     width, height = img_copy.size
     
     # Taille de police adaptée (minimum 20px pour lisibilité)
-    font_size = max(int(height * 0.06), 25)
+    font_size = max(int(height * 0.06), 20)
     
     # Chargement de la police
     font = None
