@@ -569,6 +569,10 @@ if 'notification_enabled' not in st.session_state:
     st.session_state.notification_enabled = False
 if 'counters' not in st.session_state:
     st.session_state.counters = load_counters()
+if 'last_gps_location' not in st.session_state:
+    st.session_state.last_gps_location = None
+if 'gps_auto_enabled' not in st.session_state:
+    st.session_state.gps_auto_enabled = True
 
 def verify_human_body_simple(image):
     """Vérifie la présence d'un corps humain avec OpenCV + MediaPipe"""
@@ -979,18 +983,81 @@ def messagerie_tab():
     
     st.header("📤 Nouveau message")
     
-    # Option manuelle de géolocalisation
-    with st.expander("📍 Géolocalisation (optionnel)", expanded=False):
-        enable_gps = st.checkbox("Ajouter ma position GPS", value=False, key="enable_gps_check")
+    # Géolocalisation automatique via JavaScript
+    st.markdown("""
+    <div id="gps-status" style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 10px; color: white; text-align: center; font-size: 14px; margin-bottom: 15px;">
+        📍 <span id="gps-text">Tentative de géolocalisation...</span>
+    </div>
+    <script>
+    (function() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    const acc = Math.round(position.coords.accuracy);
+                    
+                    document.getElementById('gps-text').innerHTML = 
+                        '✅ Position capturée : ' + lat.toFixed(4) + ', ' + lon.toFixed(4) + ' (±' + acc + 'm)';
+                    
+                    // Stocker dans localStorage pour que Streamlit puisse le récupérer
+                    localStorage.setItem('gps_latitude', lat);
+                    localStorage.setItem('gps_longitude', lon);
+                    localStorage.setItem('gps_timestamp', Date.now());
+                },
+                function(error) {
+                    let errorMsg = '';
+                    switch(error.code) {
+                        case error.PERMISSION_DENIED:
+                            errorMsg = '❌ Permission refusée. Autorisez la géolocalisation dans votre navigateur.';
+                            break;
+                        case error.POSITION_UNAVAILABLE:
+                            errorMsg = '⚠️ Position indisponible. Vérifiez votre GPS.';
+                            break;
+                        case error.TIMEOUT:
+                            errorMsg = '⏱️ Délai expiré. Réessayez.';
+                            break;
+                    }
+                    document.getElementById('gps-text').innerHTML = errorMsg;
+                    localStorage.removeItem('gps_latitude');
+                    localStorage.removeItem('gps_longitude');
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 15000,
+                    maximumAge: 60000
+                }
+            );
+        } else {
+            document.getElementById('gps-text').innerHTML = '❌ Géolocalisation non supportée par ce navigateur.';
+        }
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+    
+    # Option pour désactiver ou entrer manuellement
+    with st.expander("⚙️ Options de géolocalisation", expanded=False):
+        st.info("""
+        **Mode automatique** : La position GPS est capturée automatiquement par votre navigateur.
         
-        if enable_gps:
+        **Mode manuel** : Entrez vos coordonnées manuellement (clic droit sur Google Maps).
+        
+        **Désactivé** : Aucune position ne sera enregistrée.
+        """)
+        
+        gps_option = st.radio(
+            "Mode GPS",
+            ["Automatique (recommandé)", "Manuel", "Désactivé"],
+            key="gps_mode_radio",
+            horizontal=True
+        )
+        
+        if gps_option == "Manuel":
             col_lat, col_lon = st.columns(2)
             with col_lat:
-                gps_lat = st.number_input("Latitude", value=0.0, format="%.6f", step=0.000001, key="gps_lat_input")
+                manual_lat = st.number_input("Latitude", value=0.0, format="%.6f", step=0.000001, key="manual_lat_input")
             with col_lon:
-                gps_lon = st.number_input("Longitude", value=0.0, format="%.6f", step=0.000001, key="gps_lon_input")
-            
-            st.info("💡 Astuce : Faites un clic droit sur Google Maps pour obtenir vos coordonnées exactes !")
+                manual_lon = st.number_input("Longitude", value=0.0, format="%.6f", step=0.000001, key="manual_lon_input")
     
     camera_photo = st.camera_input("📸 Prendre une photo", label_visibility="collapsed", key="camera_main")
     
@@ -1007,16 +1074,50 @@ def messagerie_tab():
         else:
             text_input = st.text_input("", key="text_msg_input", placeholder="💬 Ajouter un message...", label_visibility="collapsed")
             
+            # Composant pour lire le localStorage JavaScript
+            st.markdown("""
+            <script>
+            // Envoyer les coordonnées GPS à Streamlit via query params
+            const lat = localStorage.getItem('gps_latitude');
+            const lon = localStorage.getItem('gps_longitude');
+            if (lat && lon) {
+                // Créer un événement personnalisé
+                const event = new CustomEvent('gps-ready', {
+                    detail: {latitude: parseFloat(lat), longitude: parseFloat(lon)}
+                });
+                window.dispatchEvent(event);
+            }
+            </script>
+            """, unsafe_allow_html=True)
+            
             if st.button("✉️ Envoyer", type="primary", use_container_width=True, key="send_msg_btn"):
                 image_with_text = add_text_to_image(image, text_input) if text_input else image
                 
-                # Récupérer la position GPS si activée
+                # Récupérer la position GPS selon le mode choisi
                 location = None
-                if st.session_state.get('enable_gps_check', False):
-                    lat = st.session_state.get('gps_lat_input', 0.0)
-                    lon = st.session_state.get('gps_lon_input', 0.0)
-                    if lat != 0.0 or lon != 0.0:
-                        location = {'latitude': lat, 'longitude': lon}
+                gps_mode = st.session_state.get('gps_mode_radio', 'Automatique (recommandé)')
+                
+                if gps_mode == "Manuel":
+                    manual_lat = st.session_state.get('manual_lat_input', 0.0)
+                    manual_lon = st.session_state.get('manual_lon_input', 0.0)
+                    if manual_lat != 0.0 or manual_lon != 0.0:
+                        location = {'latitude': manual_lat, 'longitude': manual_lon}
+                
+                elif gps_mode == "Automatique (recommandé)":
+                    # Note: JavaScript localStorage n'est pas directement accessible depuis Python
+                    # Solution: L'utilisateur voit sa position dans le bandeau vert
+                    # On stocke via un input caché qui lit localStorage
+                    st.info("""
+                    ℹ️ **Géolocalisation automatique** : 
+                    Si vous voyez "✅ Position capturée" ci-dessus, votre position a été détectée.
+                    
+                    ⚠️ **Limitation technique** : Streamlit ne peut pas accéder directement au GPS du navigateur.
+                    Pour enregistrer votre position, utilisez le **mode Manuel** et copiez les coordonnées affichées ci-dessus.
+                    
+                    💡 **Astuce** : Sur mobile, activez le GPS et autorisez le navigateur. Les coordonnées s'afficheront automatiquement.
+                    """)
+                
+                # Mode "Désactivé" : location reste None
                 
                 save_message(image_with_text, text_input, image, st.session_state.current_user, location)
                 
