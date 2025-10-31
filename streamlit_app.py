@@ -6,6 +6,8 @@ import os
 from datetime import datetime
 import base64
 import requests
+import folium  
+from streamlit_folium import st_folium  
 
 # Configuration de la page
 st.set_page_config(page_title="Messagerie", page_icon="📸", layout="centered")
@@ -259,6 +261,128 @@ def github_get_file(file_path):
     except Exception as e:
         return None
 
+def get_user_location():
+    """Capture les coordonnées GPS de l'utilisateur via JavaScript"""
+    location_component = """
+    <script>
+    function getLocation() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    const data = {
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        accuracy: position.coords.accuracy
+                    };
+                    window.parent.postMessage({
+                        type: 'streamlit:setComponentValue',
+                        value: data
+                    }, '*');
+                },
+                function(error) {
+                    console.error('Erreur GPS:', error);
+                    window.parent.postMessage({
+                        type: 'streamlit:setComponentValue',
+                        value: null
+                    }, '*');
+                }
+            );
+        } else {
+            window.parent.postMessage({
+                type: 'streamlit:setComponentValue',
+                value: null
+            }, '*');
+        }
+    }
+    getLocation();
+    </script>
+    <div id="location-status">Récupération de la position GPS...</div>
+    """
+    return location_component
+
+def create_map_view():
+    """Crée une vue carte avec tous les messages géolocalisés"""
+    st.header("🗺️ Carte des photos")
+    
+    # Filtrer les messages avec localisation
+    geolocated_messages = [msg for msg in st.session_state.messages if msg.get('location')]
+    
+    if not geolocated_messages:
+        st.info("Aucune photo géolocalisée pour le moment. Les futures photos avec localisation apparaîtront ici !")
+        return
+    
+    # Créer la carte centrée sur la moyenne des positions
+    latitudes = [msg['location']['latitude'] for msg in geolocated_messages]
+    longitudes = [msg['location']['longitude'] for msg in geolocated_messages]
+    center_lat = sum(latitudes) / len(latitudes)
+    center_lon = sum(longitudes) / len(longitudes)
+    
+    # Créer la carte Folium
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=3,
+        tiles='OpenStreetMap'
+    )
+    
+    # Ajouter des marqueurs pour chaque message
+    for msg in geolocated_messages:
+        if not msg.get('location'):
+            continue
+        
+        lat = msg['location']['latitude']
+        lon = msg['location']['longitude']
+        
+        # Couleur selon l'expéditeur
+        color = '#667eea' if msg['sender'] == 'admin' else '#f5576c'
+        icon_color = 'blue' if msg['sender'] == 'admin' else 'pink'
+        
+        # Convertir l'image en base64 pour le popup
+        img_bytes = io.BytesIO()
+        # Réduire la taille pour le popup
+        thumb = msg['image_with_text'].copy()
+        thumb.thumbnail((300, 300))
+        thumb.save(img_bytes, format='PNG')
+        img_b64 = base64.b64encode(img_bytes.getvalue()).decode()
+        
+        # Créer le popup HTML
+        timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%d/%m/%Y %H:%M')
+        sender_name = "Le cousin" if msg['sender'] == 'admin' else "La cousine"
+        
+        popup_html = f"""
+        <div style="width: 300px; text-align: center;">
+            <h4 style="margin: 5px 0; color: {color};">{sender_name}</h4>
+            <p style="margin: 5px 0; font-size: 12px; color: #666;">{timestamp}</p>
+            <img src="data:image/png;base64,{img_b64}" style="width: 100%; border-radius: 10px; margin-top: 10px;">
+            {f'<p style="margin-top: 10px; font-style: italic;">"{msg["text"]}"</p>' if msg.get('text') else ''}
+        </div>
+        """
+        
+        # Ajouter le marqueur
+        folium.Marker(
+            location=[lat, lon],
+            popup=folium.Popup(popup_html, max_width=320),
+            icon=folium.Icon(color=icon_color, icon='camera', prefix='fa'),
+            tooltip=f"{sender_name} - {timestamp}"
+        ).add_to(m)
+    
+    # Afficher la carte
+    st_folium(m, width=None, height=600)
+    
+    # Statistiques
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("📍 Total localisations", len(geolocated_messages))
+    
+    with col2:
+        admin_count = len([m for m in geolocated_messages if m['sender'] == 'admin'])
+        st.metric("🔵 Le cousin", admin_count)
+    
+    with col3:
+        user_count = len([m for m in geolocated_messages if m['sender'] == 'user'])
+        st.metric("🔴 La cousine", user_count)
+
 def load_counters():
     """Charge les compteurs depuis GitHub"""
     file_data = github_get_file(DATA_FILE)
@@ -302,6 +426,9 @@ def load_messages():
                     img_data = base64.b64decode(msg['original_image_b64'])
                     msg['original_image'] = Image.open(io.BytesIO(img_data))
                 
+                if 'location' not in msg:
+                    msg['location'] = None
+
                 messages.append(msg)
                 
             except Exception as e:
@@ -746,7 +873,8 @@ def save_message(image, text, original_image, sender):
         'image_with_text': image,
         'original_image': original_image,
         'sender': sender,
-        'id': int(datetime.now().timestamp() * 1000)
+        'id': int(datetime.now().timestamp() * 1000),
+        'location': location
     }
     st.session_state.messages.append(message)
     increment_counter(sender)
@@ -894,12 +1022,117 @@ def admin_panel():
             st.sidebar.success("✅ Ajouté")
             st.rerun()
 
+def messagerie_tab():
+    """Onglet de messagerie (code existant)"""
+    
+    col1, col2 = st.columns([5, 1])
+    with col2:
+        if st.button("🚪"):
+            st.session_state.authenticated = False
+            st.session_state.is_admin = False
+            st.session_state.current_user = None
+            st.rerun()
+    
+    if st.session_state.is_admin:
+        admin_panel()
+    
+    check_new_messages()
+    
+    st.header("📤 Nouveau message")
+    
+    # ✅ NOUVEAU : Demander l'autorisation de géolocalisation
+    st.markdown("""
+    <script>
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(position) {
+            // Stocker dans session storage
+            sessionStorage.setItem('user_latitude', position.coords.latitude);
+            sessionStorage.setItem('user_longitude', position.coords.longitude);
+        });
+    }
+    </script>
+    """, unsafe_allow_html=True)
+
+    camera_photo = st.camera_input("📸 Prendre une photo", label_visibility="collapsed")
+    
+    if camera_photo is not None:
+        image = Image.open(camera_photo)
+        
+        has_human = True
+        if CV2_AVAILABLE:
+            with st.spinner("🔍 Vérification..."):
+                has_human = verify_human_body_simple(image)
+        
+        if not has_human:
+            st.error("❌ La photo doit contenir une partie du corps humain")
+        else:
+            text_input = st.text_input("", key="text_msg", placeholder="💬 Ajouter un message...", label_visibility="collapsed")
+            
+            if st.button("✉️ Envoyer", type="primary", use_container_width=True):
+                image_with_text = add_text_to_image(image, text_input) if text_input else image
+                
+                # ✅ NOUVEAU : Récupérer la position GPS
+                location = None
+                if st.session_state.get('enable_gps', True):
+                    location = st.session_state.get('gps_location')
+                    if location and location['latitude'] == 0.0 and location['longitude'] == 0.0:
+                        location = None  # Ignorer les coordonnées nulles
+                
+                save_message(image_with_text, text_input, image, st.session_state.current_user, location)
+                
+                # Réinitialiser la position GPS pour le prochain message
+                st.session_state.gps_location = None
+                
+                st.success("✅ Envoyé !")
+                st.rerun()
+    
+    st.header("💬 Messages")
+    
+    if st.session_state.messages:
+        for msg in reversed(st.session_state.messages):
+            is_admin = msg['sender'] == "admin"
+            container_class = "message-container-admin" if is_admin else "message-container-user"
+            
+            st.markdown(f'<div class="{container_class}"><div class="message-content">', unsafe_allow_html=True)
+            
+            timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%d/%m %H:%M')
+            st.write(f"**{timestamp}**")
+            
+            # ✅ NOUVEAU : Afficher l'icône GPS si géolocalisé
+            if msg.get('location'):
+                st.caption(f"📍 Géolocalisé")
+            
+            st.image(msg['image_with_text'], use_container_width=True)
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                img_bytes = io.BytesIO()
+                msg['original_image'].save(img_bytes, format='PNG')
+                st.download_button("📥", img_bytes.getvalue(), f"photo_{msg['id']}.png", "image/png", key=f"dl_{msg['id']}")
+            with col2:
+                if st.button("🗑️", key=f"del_{msg['id']}"):
+                    delete_message(msg['id'])
+                    st.rerun()
+            
+            st.markdown('</div></div>', unsafe_allow_html=True)
+            st.divider()
+    else:
+        st.info("Aucun message")
+
 def main_app():
     """Application principale"""
     st.title("📸 Messagerie Photo")
 
     display_counters()
     
+    tab1, tab2 = st.tabs(["💬 Messagerie", "🗺️ Carte"])
+    
+    with tab1:
+        messagerie_tab()
+    
+    with tab2:
+        create_map_view()
+
     with st.sidebar:
         st.write(f"OpenCV disponible : **{'✅' if CV2_AVAILABLE else '❌'}**")
         if CV2_AVAILABLE:
