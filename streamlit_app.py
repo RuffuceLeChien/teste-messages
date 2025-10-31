@@ -172,6 +172,33 @@ st.markdown("""
     img {
         border-radius: 15px !important;
     }
+            
+    /* Style pour les onglets */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2rem;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 0.5rem;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        background: transparent;
+        color: white !important;
+        border-radius: 10px;
+        padding: 0.5rem 1.5rem;
+        font-weight: 500;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background: rgba(255, 255, 255, 0.2) !important;
+    }
+
+    /* Style pour la carte */
+    .folium-map {
+        border-radius: 20px !important;
+        overflow: hidden;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2) !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
