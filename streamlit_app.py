@@ -535,21 +535,26 @@ def verify_human_body_simple(image):
         return True
 
 def add_text_to_image(image, text):
-    """Ajoute du texte stylé sur l'image avec gestion multi-lignes"""
+    """Ajoute du texte stylé sur l'image SANS perte de qualité"""
     if not text or text.strip() == "":
         return image
     
-    scale_factor = 3
+    # Travail direct sur l'image (pas d'upscaling)
     img_copy = image.copy()
-    original_size = img_copy.size
-    img_copy = img_copy.resize((original_size[0] * scale_factor, original_size[1] * scale_factor), Image.LANCZOS)
+    
+    # Convertir en RGBA pour la transparence
+    if img_copy.mode != 'RGBA':
+        img_copy = img_copy.convert('RGBA')
     
     txt_layer = Image.new('RGBA', img_copy.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(txt_layer)
     
     width, height = img_copy.size
-    font_size = int(height * 0.04)
     
+    # Taille de police adaptée (minimum 20px pour lisibilité)
+    font_size = max(int(height * 0.04), 20)
+    
+    # Chargement de la police
     font = None
     font_paths = [
         "C:/Windows/Fonts/seguiemj.ttf",
@@ -572,6 +577,7 @@ def add_text_to_image(image, text):
     if font is None:
         font = ImageFont.load_default()
     
+    # Découpage du texte en lignes
     max_width = width * 0.85
     lines = []
     words = text.split()
@@ -595,6 +601,7 @@ def add_text_to_image(image, text):
     if current_line:
         lines.append(current_line)
     
+    # Gestion des lignes trop longues
     final_lines = []
     for line in lines:
         try:
@@ -613,8 +620,9 @@ def add_text_to_image(image, text):
     line_height = font_size * 1.4
     total_text_height = len(final_lines) * line_height
     
+    # Réduction si trop de lignes
     if len(final_lines) > 5:
-        font_size = int(height * 0.03)
+        font_size = max(int(height * 0.03), 16)
         try:
             for font_path in font_paths:
                 if os.path.exists(font_path):
@@ -627,6 +635,7 @@ def add_text_to_image(image, text):
     
     padding = int(font_size * 0.8)
     
+    # Calcul largeur maximale
     max_line_width = 0
     for line in final_lines:
         try:
@@ -636,6 +645,7 @@ def add_text_to_image(image, text):
             line_width = len(line) * (font_size // 2)
         max_line_width = max(max_line_width, line_width)
     
+    # Positionnement
     rect_width = max_line_width + padding * 2
     rect_height = total_text_height + padding * 2
     x = (width - rect_width) // 2
@@ -644,17 +654,24 @@ def add_text_to_image(image, text):
     rect = [x, y, x + rect_width, y + rect_height]
     radius = padding
     
-    shadow_offset = 6
+    # Ombre portée (réduite pour plus de netteté)
+    shadow_offset = 4
     shadow = Image.new('RGBA', img_copy.size, (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow)
-    shadow_draw.rounded_rectangle([r + shadow_offset for r in rect], radius=radius, fill=(0, 0, 0, 140))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(10))
+    shadow_draw.rounded_rectangle(
+        [r + shadow_offset for r in rect], 
+        radius=radius, 
+        fill=(0, 0, 0, 120)
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(6))
     txt_layer = Image.alpha_composite(txt_layer, shadow)
     draw = ImageDraw.Draw(txt_layer)
     
+    # Boîte de texte
     draw.rounded_rectangle(rect, radius=radius, fill=(20, 20, 20, 230))
     draw.rounded_rectangle(rect, radius=radius, outline=(255, 255, 255, 180), width=2)
     
+    # Dessin du texte ligne par ligne
     current_y = y + padding
     for line in final_lines:
         try:
@@ -665,22 +682,45 @@ def add_text_to_image(image, text):
         
         line_x = x + (rect_width - line_width) // 2
         
+        # Contour noir (même technique que l'original)
         for offset in [(1, 1), (-1, 1), (1, -1), (-1, -1), (0, 2), (2, 0)]:
             try:
-                draw.text((line_x + offset[0], current_y + offset[1]), line, font=font, fill=(0, 0, 0, 200), embedded_color=True)
+                draw.text(
+                    (line_x + offset[0], current_y + offset[1]), 
+                    line, 
+                    font=font, 
+                    fill=(0, 0, 0, 200), 
+                    embedded_color=True
+                )
             except:
-                draw.text((line_x + offset[0], current_y + offset[1]), line, font=font, fill=(0, 0, 0, 200))
+                draw.text(
+                    (line_x + offset[0], current_y + offset[1]), 
+                    line, 
+                    font=font, 
+                    fill=(0, 0, 0, 200)
+                )
         
+        # Texte blanc
         try:
-            draw.text((line_x, current_y), line, font=font, fill=(255, 255, 255, 255), embedded_color=True)
+            draw.text(
+                (line_x, current_y), 
+                line, 
+                font=font, 
+                fill=(255, 255, 255, 255), 
+                embedded_color=True
+            )
         except:
-            draw.text((line_x, current_y), line, font=font, fill=(255, 255, 255, 255))
+            draw.text(
+                (line_x, current_y), 
+                line, 
+                font=font, 
+                fill=(255, 255, 255, 255)
+            )
         
         current_y += line_height
     
-    img_copy = img_copy.convert('RGBA')
+    # Composite final
     img_copy = Image.alpha_composite(img_copy, txt_layer)
-    img_copy = img_copy.resize(original_size, Image.LANCZOS)
     img_copy = img_copy.convert('RGB')
     
     return img_copy
