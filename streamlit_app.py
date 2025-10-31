@@ -999,7 +999,7 @@ def main_app():
     st.header("💬 Messages")
     
     if st.session_state.messages:
-        for msg in st.session_state.messages:
+        for msg in reversed(st.session_state.messages):
             is_admin = msg['sender'] == "admin"
             container_class = "message-container-admin" if is_admin else "message-container-user"
             
