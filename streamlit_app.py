@@ -37,8 +37,6 @@ def load_mediapipe():
 cv2, np, CV2_AVAILABLE = load_opencv()
 mp, MEDIAPIPE_AVAILABLE = load_mediapipe()
 
-
-
 # CSS pour un design moderne et élégant
 st.markdown("""
 <style>
@@ -238,7 +236,7 @@ def github_update_file(file_path, content, sha=None, message="Update data"):
         return False
 
 def github_get_file(file_path):
-    """Récupère un fichier depuis GitHub via l'API Blob (pas de limite de taille)"""
+    """Récupère un fichier depuis GitHub via l'API Blob"""
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return None
     
@@ -288,70 +286,27 @@ def github_get_file(file_path):
     except Exception as e:
         return None
 
-def get_user_location():
-    """Capture les coordonnées GPS de l'utilisateur via JavaScript"""
-    location_component = """
-    <script>
-    function getLocation() {
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                function(position) {
-                    const data = {
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude,
-                        accuracy: position.coords.accuracy
-                    };
-                    window.parent.postMessage({
-                        type: 'streamlit:setComponentValue',
-                        value: data
-                    }, '*');
-                },
-                function(error) {
-                    console.error('Erreur GPS:', error);
-                    window.parent.postMessage({
-                        type: 'streamlit:setComponentValue',
-                        value: null
-                    }, '*');
-                }
-            );
-        } else {
-            window.parent.postMessage({
-                type: 'streamlit:setComponentValue',
-                value: null
-            }, '*');
-        }
-    }
-    getLocation();
-    </script>
-    <div id="location-status">Récupération de la position GPS...</div>
-    """
-    return location_component
-
 def create_map_view():
     """Crée une vue carte avec tous les messages géolocalisés"""
     st.header("🗺️ Carte des photos")
     
-    # Filtrer les messages avec localisation
     geolocated_messages = [msg for msg in st.session_state.messages if msg.get('location')]
     
     if not geolocated_messages:
         st.info("Aucune photo géolocalisée pour le moment. Les futures photos avec localisation apparaîtront ici !")
         return
     
-    # Créer la carte centrée sur la moyenne des positions
     latitudes = [msg['location']['latitude'] for msg in geolocated_messages]
     longitudes = [msg['location']['longitude'] for msg in geolocated_messages]
     center_lat = sum(latitudes) / len(latitudes)
     center_lon = sum(longitudes) / len(longitudes)
     
-    # Créer la carte Folium
     m = folium.Map(
         location=[center_lat, center_lon],
         zoom_start=3,
         tiles='OpenStreetMap'
     )
     
-    # Ajouter des marqueurs pour chaque message
     for msg in geolocated_messages:
         if not msg.get('location'):
             continue
@@ -359,19 +314,15 @@ def create_map_view():
         lat = msg['location']['latitude']
         lon = msg['location']['longitude']
         
-        # Couleur selon l'expéditeur
         color = '#667eea' if msg['sender'] == 'admin' else '#f5576c'
         icon_color = 'blue' if msg['sender'] == 'admin' else 'pink'
         
-        # Convertir l'image en base64 pour le popup
         img_bytes = io.BytesIO()
-        # Réduire la taille pour le popup
         thumb = msg['image_with_text'].copy()
         thumb.thumbnail((300, 300))
         thumb.save(img_bytes, format='PNG')
         img_b64 = base64.b64encode(img_bytes.getvalue()).decode()
         
-        # Créer le popup HTML
         timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%d/%m/%Y %H:%M')
         sender_name = "Le cousin" if msg['sender'] == 'admin' else "La cousine"
         
@@ -384,7 +335,6 @@ def create_map_view():
         </div>
         """
         
-        # Ajouter le marqueur
         folium.Marker(
             location=[lat, lon],
             popup=folium.Popup(popup_html, max_width=320),
@@ -392,10 +342,8 @@ def create_map_view():
             tooltip=f"{sender_name} - {timestamp}"
         ).add_to(m)
     
-    # Afficher la carte
     st_folium(m, width=None, height=600)
     
-    # Statistiques
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     
@@ -475,17 +423,18 @@ def save_messages():
                 'timestamp': msg['timestamp'],
                 'text': msg['text'],
                 'sender': msg['sender'],
-                'id': msg['id']
+                'id': msg['id'],
+                'location': msg.get('location')  # ✅ AJOUT
             }
             
             if 'image_with_text' in msg:
                 img_bytes = io.BytesIO()
-                msg['image_with_text'].save(img_bytes, format='PNG', optimize=False, compress_level=0)
+                msg['image_with_text'].save(img_bytes, format='PNG', optimize=True, compress_level=6)
                 msg_copy['image_with_text_b64'] = base64.b64encode(img_bytes.getvalue()).decode()
             
             if 'original_image' in msg:
                 img_bytes = io.BytesIO()
-                msg['original_image'].save(img_bytes, format='PNG', optimize=False, compress_level=0)
+                msg['original_image'].save(img_bytes, format='PNG', optimize=True, compress_level=6)
                 msg_copy['original_image_b64'] = base64.b64encode(img_bytes.getvalue()).decode()
             
             messages_to_save.append(msg_copy)
@@ -525,47 +474,42 @@ def send_telegram_notification(sender, has_text):
     try:
         import random
         
-        sender_name = "un homme grandiose" if sender == "admin" else "une beauté absolue"
-        
-        # Messages pour l'admin
         messages_admin = [
-            f"📸 Nouveau message de ta cousine préférée !",
-            f"✨ une beauté absolue vient de poster une photo !",
-            f"🎉 Regarde ! une vision de paradie vient d'apparaitre !",
-            f"💌 Tu as reçu un message de la femme de ta vie !",
-            f"🔔 Ding dong ! tu as enfin reçu ce que tu attendais tout ce temps !",
-            f"📬 Viens voir cette pepite qui vient d'arriver !",
-            f"🌟 une beauté absolue pense à toi !",
-            f"💕 Message tout frais de ta cousine préférée !",
-            f"🎨 une beauté absolue partage un moment avec toi !",
-            f"🚀 Un message arrive en direction de ton coeur !",
-            f"Arrete d'esperer c'est ta cousine ! il y aura rien de plus !",
-            f"Attend au moins la fin de ton cours pour voir ce message",
-            f"Assis toi pour pas tomber par terre face a une tel beautée",
-            f"C'est bon tu vas passer une bonne journnée grace à ce message",
-            f"Baisse ta luminositée, tu vas être éblouie",
+            "📸 Nouveau message de ta cousine préférée !",
+            "✨ une beauté absolue vient de poster une photo !",
+            "🎉 Regarde ! une vision de paradie vient d'apparaitre !",
+            "💌 Tu as reçu un message de la femme de ta vie !",
+            "🔔 Ding dong ! tu as enfin reçu ce que tu attendais tout ce temps !",
+            "📬 Viens voir cette pepite qui vient d'arriver !",
+            "🌟 une beauté absolue pense à toi !",
+            "💕 Message tout frais de ta cousine préférée !",
+            "🎨 une beauté absolue partage un moment avec toi !",
+            "🚀 Un message arrive en direction de ton coeur !",
+            "Arrete d'esperer c'est ta cousine ! il y aura rien de plus !",
+            "Attend au moins la fin de ton cours pour voir ce message",
+            "Assis toi pour pas tomber par terre face a une tel beautée",
+            "C'est bon tu vas passer une bonne journnée grace à ce message",
+            "Baisse ta luminositée, tu vas être éblouie",
         ]
         
-        # Messages pour l'utilisateur
         messages_user = [
-            f"📸 Nouveau message de ton homme !",
-            f"✨ un homme grandiose vient de poster une photo !",
-            f"🎉 Regarde ! un être malicieux a envoyé quelque chose !",
-            f"💌 Tu as reçu un message rempli d'affection !",
-            f"🔔 Ding dong ! C'est encore et toujours moi !",
-            f"📬 Nouveau dans la boîte : tu l'attendais et il est enfin là !",
-            f"🌟 un homme grandiose pense (encore et toujours) à toi !",
-            f"💕 Message tout frais de ton plus grand fan !",
-            f"🎨 ton cousin PREFERE partage un instant de sa vie avec toi !",
-            f"🚀 Message en approche de ton future mari !",
-            f"Ton impatience de voir ce message est palpable",
-            f"On espère que ta famille ne tombera pas sur ce message",
-            f"Si tu réagie comme ça a chaque notif tes potes vont se poser des questions",
-            f"C'est pour toi bébou... il a encore pensé a toi !",
-            f"Viens voir ce corps d'apollon",
+            "📸 Nouveau message de ton homme !",
+            "✨ un homme grandiose vient de poster une photo !",
+            "🎉 Regarde ! un être malicieux a envoyé quelque chose !",
+            "💌 Tu as reçu un message rempli d'affection !",
+            "🔔 Ding dong ! C'est encore et toujours moi !",
+            "📬 Nouveau dans la boîte : tu l'attendais et il est enfin là !",
+            "🌟 un homme grandiose pense (encore et toujours) à toi !",
+            "💕 Message tout frais de ton plus grand fan !",
+            "🎨 ton cousin PREFERE partage un instant de sa vie avec toi !",
+            "🚀 Message en approche de ton future mari !",
+            "Ton impatience de voir ce message est palpable",
+            "On espère que ta famille ne tombera pas sur ce message",
+            "Si tu réagie comme ça a chaque notif tes potes vont se poser des questions",
+            "C'est pour toi bébou... il a encore pensé a toi !",
+            "Viens voir ce corps d'apollon",
         ]
         
-        # Choisir un message aléatoire
         if sender == "admin":
             base_message = random.choice(messages_user)
         else:
@@ -589,14 +533,12 @@ def reload_heavy_libraries():
         import importlib
         import sys
         
-        # Recharger OpenCV
         if 'cv2' in sys.modules:
             del sys.modules['cv2']
         import cv2
         import numpy as np
         CV2_AVAILABLE = True
         
-        # Recharger MediaPipe
         if 'mediapipe' in sys.modules:
             del sys.modules['mediapipe']
         import mediapipe as mp
@@ -693,10 +635,8 @@ def add_text_to_image(image, text):
     if not text or text.strip() == "":
         return image
     
-    # Travail direct sur l'image (pas d'upscaling)
     img_copy = image.copy()
     
-    # Convertir en RGBA pour la transparence
     if img_copy.mode != 'RGBA':
         img_copy = img_copy.convert('RGBA')
     
@@ -704,11 +644,8 @@ def add_text_to_image(image, text):
     draw = ImageDraw.Draw(txt_layer)
     
     width, height = img_copy.size
+    font_size = max(int(height * 0.04), 20)
     
-    # Taille de police adaptée (minimum 20px pour lisibilité)
-    font_size = max(int(height * 0.02), 20)
-    
-    # Chargement de la police
     font = None
     font_paths = [
         "C:/Windows/Fonts/seguiemj.ttf",
@@ -731,7 +668,6 @@ def add_text_to_image(image, text):
     if font is None:
         font = ImageFont.load_default()
     
-    # Découpage du texte en lignes
     max_width = width * 0.85
     lines = []
     words = text.split()
@@ -755,7 +691,6 @@ def add_text_to_image(image, text):
     if current_line:
         lines.append(current_line)
     
-    # Gestion des lignes trop longues
     final_lines = []
     for line in lines:
         try:
@@ -774,7 +709,6 @@ def add_text_to_image(image, text):
     line_height = font_size * 1.4
     total_text_height = len(final_lines) * line_height
     
-    # Réduction si trop de lignes
     if len(final_lines) > 5:
         font_size = max(int(height * 0.03), 16)
         try:
@@ -789,7 +723,6 @@ def add_text_to_image(image, text):
     
     padding = int(font_size * 0.8)
     
-    # Calcul largeur maximale
     max_line_width = 0
     for line in final_lines:
         try:
@@ -799,7 +732,6 @@ def add_text_to_image(image, text):
             line_width = len(line) * (font_size // 2)
         max_line_width = max(max_line_width, line_width)
     
-    # Positionnement
     rect_width = max_line_width + padding * 2
     rect_height = total_text_height + padding * 2
     x = (width - rect_width) // 2
@@ -808,7 +740,6 @@ def add_text_to_image(image, text):
     rect = [x, y, x + rect_width, y + rect_height]
     radius = padding
     
-    # Ombre portée (réduite pour plus de netteté)
     shadow_offset = 4
     shadow = Image.new('RGBA', img_copy.size, (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow)
@@ -821,11 +752,9 @@ def add_text_to_image(image, text):
     txt_layer = Image.alpha_composite(txt_layer, shadow)
     draw = ImageDraw.Draw(txt_layer)
     
-    # Boîte de texte
     draw.rounded_rectangle(rect, radius=radius, fill=(20, 20, 20, 230))
     draw.rounded_rectangle(rect, radius=radius, outline=(255, 255, 255, 180), width=2)
     
-    # Dessin du texte ligne par ligne
     current_y = y + padding
     for line in final_lines:
         try:
@@ -836,7 +765,6 @@ def add_text_to_image(image, text):
         
         line_x = x + (rect_width - line_width) // 2
         
-        # Contour noir (même technique que l'original)
         for offset in [(1, 1), (-1, 1), (1, -1), (-1, -1), (0, 2), (2, 0)]:
             try:
                 draw.text(
@@ -854,7 +782,6 @@ def add_text_to_image(image, text):
                     fill=(0, 0, 0, 200)
                 )
         
-        # Texte blanc
         try:
             draw.text(
                 (line_x, current_y), 
@@ -873,7 +800,6 @@ def add_text_to_image(image, text):
         
         current_y += line_height
     
-    # Composite final
     img_copy = Image.alpha_composite(img_copy, txt_layer)
     img_copy = img_copy.convert('RGB')
     
@@ -892,8 +818,8 @@ def increment_counter(user):
     elif counter_value % 5 == 0:
         st.success(f"🌟 **{counter_value} messages** ! Continue comme ça ! 🌟")
 
-def save_message(image, text, original_image, sender):
-    """Sauvegarde un message"""
+def save_message(image, text, original_image, sender, location=None):
+    """Sauvegarde un message avec coordonnées GPS optionnelles"""
     message = {
         'timestamp': datetime.now().isoformat(),
         'text': text,
@@ -910,17 +836,14 @@ def save_message(image, text, original_image, sender):
 
 def delete_message(message_id):
     """Supprime un message et décrémente le compteur"""
-    # Trouver le message à supprimer pour récupérer l'expéditeur
     message_to_delete = None
     for msg in st.session_state.messages:
         if msg['id'] == message_id:
             message_to_delete = msg
             break
     
-    # Supprimer le message
     st.session_state.messages = [msg for msg in st.session_state.messages if msg['id'] != message_id]
     
-    # Décrémenter le compteur de l'expéditeur
     if message_to_delete:
         sender = message_to_delete['sender']
         if sender in st.session_state.counters and st.session_state.counters[sender] > 0:
@@ -1050,37 +973,26 @@ def admin_panel():
             st.rerun()
 
 def messagerie_tab():
-    """Onglet de messagerie (code existant)"""
-    
-    col1, col2 = st.columns([5, 1])
-    with col2:
-        if st.button("🚪"):
-            st.session_state.authenticated = False
-            st.session_state.is_admin = False
-            st.session_state.current_user = None
-            st.rerun()
-    
-    if st.session_state.is_admin:
-        admin_panel()
+    """Onglet de messagerie"""
     
     check_new_messages()
     
     st.header("📤 Nouveau message")
     
-    # ✅ NOUVEAU : Demander l'autorisation de géolocalisation
-    st.markdown("""
-    <script>
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(function(position) {
-            // Stocker dans session storage
-            sessionStorage.setItem('user_latitude', position.coords.latitude);
-            sessionStorage.setItem('user_longitude', position.coords.longitude);
-        });
-    }
-    </script>
-    """, unsafe_allow_html=True)
-
-    camera_photo = st.camera_input("📸 Prendre une photo", label_visibility="collapsed")
+    # Option manuelle de géolocalisation
+    with st.expander("📍 Géolocalisation (optionnel)", expanded=False):
+        enable_gps = st.checkbox("Ajouter ma position GPS", value=False, key="enable_gps_check")
+        
+        if enable_gps:
+            col_lat, col_lon = st.columns(2)
+            with col_lat:
+                gps_lat = st.number_input("Latitude", value=0.0, format="%.6f", step=0.000001, key="gps_lat_input")
+            with col_lon:
+                gps_lon = st.number_input("Longitude", value=0.0, format="%.6f", step=0.000001, key="gps_lon_input")
+            
+            st.info("💡 Astuce : Faites un clic droit sur Google Maps pour obtenir vos coordonnées exactes !")
+    
+    camera_photo = st.camera_input("📸 Prendre une photo", label_visibility="collapsed", key="camera_main")
     
     if camera_photo is not None:
         image = Image.open(camera_photo)
@@ -1093,22 +1005,20 @@ def messagerie_tab():
         if not has_human:
             st.error("❌ La photo doit contenir une partie du corps humain")
         else:
-            text_input = st.text_input("", key="text_msg", placeholder="💬 Ajouter un message...", label_visibility="collapsed")
+            text_input = st.text_input("", key="text_msg_input", placeholder="💬 Ajouter un message...", label_visibility="collapsed")
             
-            if st.button("✉️ Envoyer", type="primary", use_container_width=True):
+            if st.button("✉️ Envoyer", type="primary", use_container_width=True, key="send_msg_btn"):
                 image_with_text = add_text_to_image(image, text_input) if text_input else image
                 
-                # ✅ NOUVEAU : Récupérer la position GPS
+                # Récupérer la position GPS si activée
                 location = None
-                if st.session_state.get('enable_gps', True):
-                    location = st.session_state.get('gps_location')
-                    if location and location['latitude'] == 0.0 and location['longitude'] == 0.0:
-                        location = None  # Ignorer les coordonnées nulles
+                if st.session_state.get('enable_gps_check', False):
+                    lat = st.session_state.get('gps_lat_input', 0.0)
+                    lon = st.session_state.get('gps_lon_input', 0.0)
+                    if lat != 0.0 or lon != 0.0:
+                        location = {'latitude': lat, 'longitude': lon}
                 
                 save_message(image_with_text, text_input, image, st.session_state.current_user, location)
-                
-                # Réinitialiser la position GPS pour le prochain message
-                st.session_state.gps_location = None
                 
                 st.success("✅ Envoyé !")
                 st.rerun()
@@ -1125,9 +1035,11 @@ def messagerie_tab():
             timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%d/%m %H:%M')
             st.write(f"**{timestamp}**")
             
-            # ✅ NOUVEAU : Afficher l'icône GPS si géolocalisé
+            # Afficher l'icône GPS si géolocalisé
             if msg.get('location'):
-                st.caption(f"📍 Géolocalisé")
+                lat = msg['location']['latitude']
+                lon = msg['location']['longitude']
+                st.caption(f"📍 {lat:.4f}, {lon:.4f}")
             
             st.image(msg['image_with_text'], use_container_width=True)
             
@@ -1152,6 +1064,16 @@ def main_app():
 
     display_counters()
     
+    # Bouton de déconnexion en haut à droite
+    col1, col2 = st.columns([5, 1])
+    with col2:
+        if st.button("🚪", key="logout_btn"):
+            st.session_state.authenticated = False
+            st.session_state.is_admin = False
+            st.session_state.current_user = None
+            st.rerun()
+    
+    # Système d'onglets
     tab1, tab2 = st.tabs(["💬 Messagerie", "🗺️ Carte"])
     
     with tab1:
@@ -1160,44 +1082,12 @@ def main_app():
     with tab2:
         create_map_view()
 
+    # Sidebar
     with st.sidebar:
-        st.write(f"OpenCV disponible : **{'✅' if CV2_AVAILABLE else '❌'}**")
-        if CV2_AVAILABLE:
-            try:
-                st.write(f"OpenCV version : **{cv2.__version__}**")
-            except:
-                st.write("⚠️ OpenCV importé mais version inaccessible")
-    
-        st.write(f"MediaPipe disponible : **{'✅' if MEDIAPIPE_AVAILABLE else '❌'}**")
-        if MEDIAPIPE_AVAILABLE:
-            try:
-                st.write(f"MediaPipe version : **{mp.__version__}**")
-            except:
-                st.write("⚠️ MediaPipe importé mais version inaccessible")
-    
-        st.write(f"Numpy disponible : **{'✅' if 'np' in dir() else '❌'}**")
-        if 'np' in dir():
-            try:
-                st.write(f"Numpy version : **{np.__version__}**")
-            except:
-                pass
-        #st.write("### 🐛 Debug Telegram")
-        #st.write(f"Bot Token configuré : **{'✅ Oui' if TELEGRAM_BOT_TOKEN else '❌ Non'}**")
-        #st.write(f"Chat ID configuré : **{'✅ Oui' if TELEGRAM_GROUP_CHAT_ID else '❌ Non'}**")
-    
-        #if TELEGRAM_BOT_TOKEN:
-            #st.write(f"Token (10 premiers chars) : `{TELEGRAM_BOT_TOKEN[:10]}...`")
-        #if TELEGRAM_GROUP_CHAT_ID:
-            #st.write(f"Chat ID : `{TELEGRAM_GROUP_CHAT_ID}`")
-    
-    # Bouton de test
-        #if st.button("🧪 Tester notification"):
-            #result = send_telegram_notification("admin", True)
-            #if result:
-                #st.success("✅ Notification envoyée !")
-            #else:
-                #st.error("❌ Échec de l'envoi")
-
+        if st.session_state.is_admin:
+            admin_panel()
+            st.markdown("---")
+        
         st.write("### 📊 État du système")
         st.write(f"Messages en mémoire : **{len(st.session_state.messages)}**")
         st.write(f"GitHub : **{'✅ Configuré' if GITHUB_TOKEN and GITHUB_REPO else '❌ Non configuré'}**")
@@ -1206,7 +1096,7 @@ def main_app():
 
         if not CV2_AVAILABLE or not MEDIAPIPE_AVAILABLE:
             st.warning("⚠️ Bibliothèques non chargées")
-            if st.button("🔄 Recharger les bibliothèques"):
+            if st.button("🔄 Recharger les bibliothèques", key="reload_libs_btn"):
                 with st.spinner("Rechargement..."):
                     if reload_heavy_libraries():
                         st.success("✅ Rechargées avec succès !")
@@ -1214,76 +1104,11 @@ def main_app():
                     else:
                         st.error("❌ Échec du rechargement")
         
-        if st.button("🔄 Recharger depuis GitHub"):
+        if st.button("🔄 Recharger depuis GitHub", key="reload_github_btn"):
             st.session_state.messages = load_messages()
             st.session_state.user_passwords = load_passwords()
             st.session_state.counters = load_counters()
             st.rerun()
-    
-    check_new_messages()
-    
-    col1, col2 = st.columns([5, 1])
-    with col2:
-        if st.button("🚪"):
-            st.session_state.authenticated = False
-            st.session_state.is_admin = False
-            st.session_state.current_user = None
-            st.rerun()
-    
-    if st.session_state.is_admin:
-        admin_panel()
-    
-    st.header("📤 Nouveau message")
-    
-    camera_photo = st.camera_input("📸 Prendre une photo", label_visibility="collapsed")
-    
-    if camera_photo is not None:
-        image = Image.open(camera_photo)
-        
-        has_human = True
-        if CV2_AVAILABLE:
-            with st.spinner("🔍 Vérification..."):
-                has_human = verify_human_body_simple(image)
-        
-        if not has_human:
-            st.error("❌ La photo doit contenir une partie du corps humain")
-        else:
-            text_input = st.text_input("", key="text_msg", placeholder="💬 Ajouter un message...", label_visibility="collapsed")
-            
-            if st.button("✉️ Envoyer", type="primary", use_container_width=True):
-                image_with_text = add_text_to_image(image, text_input) if text_input else image
-                save_message(image_with_text, text_input, image, st.session_state.current_user)
-                st.success("✅ Envoyé !")
-                st.rerun()
-    
-    st.header("💬 Messages")
-    
-    if st.session_state.messages:
-        for msg in reversed(st.session_state.messages):
-            is_admin = msg['sender'] == "admin"
-            container_class = "message-container-admin" if is_admin else "message-container-user"
-            
-            st.markdown(f'<div class="{container_class}"><div class="message-content">', unsafe_allow_html=True)
-            
-            timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%d/%m %H:%M')
-            st.write(f"**{timestamp}**")
-            
-            st.image(msg['image_with_text'], use_container_width=True)
-            
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                img_bytes = io.BytesIO()
-                msg['original_image'].save(img_bytes, format='PNG')
-                st.download_button("📥", img_bytes.getvalue(), f"photo_{msg['id']}.png", "image/png", key=f"dl_{msg['id']}")
-            with col2:
-                if st.button("🗑️", key=f"del_{msg['id']}"):
-                    delete_message(msg['id'])
-                    st.rerun()
-            
-            st.markdown('</div></div>', unsafe_allow_html=True)
-            st.divider()
-    else:
-        st.info("Aucun message")
 
 if not st.session_state.authenticated:
     login_page()
