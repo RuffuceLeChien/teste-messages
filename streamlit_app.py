@@ -1119,6 +1119,8 @@ def messagerie_tab():
         image = Image.open(camera_photo)
 
         auto_gps = extract_gps_from_image(image)
+
+        st.session_state.auto_gps = auto_gps
     
     if auto_gps:
         st.success(f"📍 Position GPS détectée automatiquement : {auto_gps['latitude']:.6f}, {auto_gps['longitude']:.6f}")
@@ -1147,7 +1149,7 @@ def messagerie_tab():
 
                 if gps_mode == "Automatique (recommandé)":
                     # Utiliser les GPS extraits des EXIF
-                    location = auto_gps
+                    location = st.session_state.get('auto_gps', None)
                     if location:
                         st.success(f"✅ Position enregistrée : {location['latitude']:.4f}, {location['longitude']:.4f}")
                     else:
