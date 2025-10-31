@@ -809,6 +809,54 @@ def add_text_to_image(image, text):
     
     return img_copy
 
+def extract_gps_from_image(image):
+    """Extrait les coordonnées GPS des métadonnées EXIF de l'image"""
+    try:
+        from PIL.ExifTags import TAGS, GPSTAGS
+        
+        exif = image._getexif()
+        if not exif:
+            return None
+        
+        gps_info = {}
+        for tag, value in exif.items():
+            tag_name = TAGS.get(tag, tag)
+            if tag_name == 'GPSInfo':
+                for gps_tag in value:
+                    gps_tag_name = GPSTAGS.get(gps_tag, gps_tag)
+                    gps_info[gps_tag_name] = value[gps_tag]
+        
+        if not gps_info:
+            return None
+        
+        # Convertir les coordonnées GPS en décimal
+        def convert_to_degrees(value):
+            d = float(value[0])
+            m = float(value[1])
+            s = float(value[2])
+            return d + (m / 60.0) + (s / 3600.0)
+        
+        lat = convert_to_degrees(gps_info.get('GPSLatitude', [0, 0, 0]))
+        lat_ref = gps_info.get('GPSLatitudeRef', 'N')
+        if lat_ref == 'S':
+            lat = -lat
+        
+        lon = convert_to_degrees(gps_info.get('GPSLongitude', [0, 0, 0]))
+        lon_ref = gps_info.get('GPSLongitudeRef', 'E')
+        if lon_ref == 'W':
+            lon = -lon
+        
+        if lat == 0.0 and lon == 0.0:
+            return None
+        
+        return {
+            'latitude': lat,
+            'longitude': lon
+        }
+        
+    except Exception as e:
+        return None
+
 def increment_counter(user):
     """Incrémente le compteur de l'utilisateur avec animation"""
     st.session_state.counters[user] = st.session_state.counters.get(user, 0) + 1
@@ -1059,10 +1107,24 @@ def messagerie_tab():
             with col_lon:
                 manual_lon = st.number_input("Longitude", value=0.0, format="%.6f", step=0.000001, key="manual_lon_input")
     
-    camera_photo = st.camera_input("📸 Prendre une photo", label_visibility="collapsed", key="camera_main")
+    camera_photo = st.file_uploader(
+    "📸 Prendre ou choisir une photo", 
+    type=['jpg', 'jpeg', 'png'],
+    label_visibility="collapsed",
+    key="photo_uploader",
+    accept_multiple_files=False
+    )
     
     if camera_photo is not None:
         image = Image.open(camera_photo)
+
+        auto_gps = extract_gps_from_image(image)
+    
+    if auto_gps:
+        st.success(f"📍 Position GPS détectée automatiquement : {auto_gps['latitude']:.6f}, {auto_gps['longitude']:.6f}")
+    else:
+        st.info("ℹ️ Aucune donnée GPS trouvée dans cette photo. Assurez-vous que la localisation est activée sur votre appareil.")
+    
         
         has_human = True
         if CV2_AVAILABLE:
@@ -1074,21 +1136,7 @@ def messagerie_tab():
         else:
             text_input = st.text_input("", key="text_msg_input", placeholder="💬 Ajouter un message...", label_visibility="collapsed")
             
-            # Composant pour lire le localStorage JavaScript
-            st.markdown("""
-            <script>
-            // Envoyer les coordonnées GPS à Streamlit via query params
-            const lat = localStorage.getItem('gps_latitude');
-            const lon = localStorage.getItem('gps_longitude');
-            if (lat && lon) {
-                // Créer un événement personnalisé
-                const event = new CustomEvent('gps-ready', {
-                    detail: {latitude: parseFloat(lat), longitude: parseFloat(lon)}
-                });
-                window.dispatchEvent(event);
-            }
-            </script>
-            """, unsafe_allow_html=True)
+            st.info("📍 Si votre photo contient des données GPS, elles seront détectées automatiquement.")
             
             if st.button("✉️ Envoyer", type="primary", use_container_width=True, key="send_msg_btn"):
                 image_with_text = add_text_to_image(image, text_input) if text_input else image
@@ -1096,6 +1144,14 @@ def messagerie_tab():
                 # Récupérer la position GPS selon le mode choisi
                 location = None
                 gps_mode = st.session_state.get('gps_mode_radio', 'Automatique (recommandé)')
+
+                if gps_mode == "Automatique (recommandé)":
+                    # Utiliser les GPS extraits des EXIF
+                    location = auto_gps
+                    if location:
+                        st.success(f"✅ Position enregistrée : {location['latitude']:.4f}, {location['longitude']:.4f}")
+                    else:
+                        st.warning("⚠️ Aucune position GPS détectée dans la photo")
                 
                 if gps_mode == "Manuel":
                     manual_lat = st.session_state.get('manual_lat_input', 0.0)
@@ -1103,20 +1159,7 @@ def messagerie_tab():
                     if manual_lat != 0.0 or manual_lon != 0.0:
                         location = {'latitude': manual_lat, 'longitude': manual_lon}
                 
-                elif gps_mode == "Automatique (recommandé)":
-                    # Note: JavaScript localStorage n'est pas directement accessible depuis Python
-                    # Solution: L'utilisateur voit sa position dans le bandeau vert
-                    # On stocke via un input caché qui lit localStorage
-                    st.info("""
-                    ℹ️ **Géolocalisation automatique** : 
-                    Si vous voyez "✅ Position capturée" ci-dessus, votre position a été détectée.
-                    
-                    ⚠️ **Limitation technique** : Streamlit ne peut pas accéder directement au GPS du navigateur.
-                    Pour enregistrer votre position, utilisez le **mode Manuel** et copiez les coordonnées affichées ci-dessus.
-                    
-                    💡 **Astuce** : Sur mobile, activez le GPS et autorisez le navigateur. Les coordonnées s'afficheront automatiquement.
-                    """)
-                
+
                 # Mode "Désactivé" : location reste None
                 
                 save_message(image_with_text, text_input, image, st.session_state.current_user, location)
