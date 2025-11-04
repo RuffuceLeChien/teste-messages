@@ -396,9 +396,6 @@ def send_telegram_notification(sender, has_text):
         return False
     
     try:
-        import random
-        
-        sender_name = "un homme grandiose" if sender == "admin" else "une beauté absolue"
         
         if text and text.strip():
             # Limiter à 100 caractères pour ne pas surcharger la notif
@@ -414,7 +411,6 @@ def send_telegram_notification(sender, has_text):
         response = requests.post(url, json={
             "chat_id": TELEGRAM_GROUP_CHAT_ID,
             "text": message
-            "parse_mode": "HTML" 
         }, timeout=5)
         
         return response.status_code == 200
