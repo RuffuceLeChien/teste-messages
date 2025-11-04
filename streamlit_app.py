@@ -6,8 +6,6 @@ import os
 from datetime import datetime
 import base64
 import requests
-import folium  
-from streamlit_folium import st_folium  
 
 # Configuration de la page
 st.set_page_config(page_title="Messagerie", page_icon="📸", layout="centered")
@@ -36,6 +34,8 @@ def load_mediapipe():
 # Charger les bibliothèques
 cv2, np, CV2_AVAILABLE = load_opencv()
 mp, MEDIAPIPE_AVAILABLE = load_mediapipe()
+
+
 
 # CSS pour un design moderne et élégant
 st.markdown("""
@@ -170,33 +170,6 @@ st.markdown("""
     img {
         border-radius: 15px !important;
     }
-            
-    /* Style pour les onglets */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 2rem;
-        background: rgba(255, 255, 255, 0.1);
-        border-radius: 15px;
-        padding: 0.5rem;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        background: transparent;
-        color: white !important;
-        border-radius: 10px;
-        padding: 0.5rem 1.5rem;
-        font-weight: 500;
-    }
-
-    .stTabs [aria-selected="true"] {
-        background: rgba(255, 255, 255, 0.2) !important;
-    }
-
-    /* Style pour la carte */
-    .folium-map {
-        border-radius: 20px !important;
-        overflow: hidden;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.2) !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -236,7 +209,7 @@ def github_update_file(file_path, content, sha=None, message="Update data"):
         return False
 
 def github_get_file(file_path):
-    """Récupère un fichier depuis GitHub via l'API Blob"""
+    """Récupère un fichier depuis GitHub via l'API Blob (pas de limite de taille)"""
     if not GITHUB_TOKEN or not GITHUB_REPO:
         return None
     
@@ -286,78 +259,6 @@ def github_get_file(file_path):
     except Exception as e:
         return None
 
-def create_map_view():
-    """Crée une vue carte avec tous les messages géolocalisés"""
-    st.header("🗺️ Carte des photos")
-    
-    geolocated_messages = [msg for msg in st.session_state.messages if msg.get('location')]
-    
-    if not geolocated_messages:
-        st.info("Aucune photo géolocalisée pour le moment. Les futures photos avec localisation apparaîtront ici !")
-        return
-    
-    latitudes = [msg['location']['latitude'] for msg in geolocated_messages]
-    longitudes = [msg['location']['longitude'] for msg in geolocated_messages]
-    center_lat = sum(latitudes) / len(latitudes)
-    center_lon = sum(longitudes) / len(longitudes)
-    
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=3,
-        tiles='OpenStreetMap'
-    )
-    
-    for msg in geolocated_messages:
-        if not msg.get('location'):
-            continue
-        
-        lat = msg['location']['latitude']
-        lon = msg['location']['longitude']
-        
-        color = '#667eea' if msg['sender'] == 'admin' else '#f5576c'
-        icon_color = 'blue' if msg['sender'] == 'admin' else 'pink'
-        
-        img_bytes = io.BytesIO()
-        thumb = msg['image_with_text'].copy()
-        thumb.thumbnail((300, 300))
-        thumb.save(img_bytes, format='PNG')
-        img_b64 = base64.b64encode(img_bytes.getvalue()).decode()
-        
-        timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%d/%m/%Y %H:%M')
-        sender_name = "Le cousin" if msg['sender'] == 'admin' else "La cousine"
-        
-        popup_html = f"""
-        <div style="width: 300px; text-align: center;">
-            <h4 style="margin: 5px 0; color: {color};">{sender_name}</h4>
-            <p style="margin: 5px 0; font-size: 12px; color: #666;">{timestamp}</p>
-            <img src="data:image/png;base64,{img_b64}" style="width: 100%; border-radius: 10px; margin-top: 10px;">
-            {f'<p style="margin-top: 10px; font-style: italic;">"{msg["text"]}"</p>' if msg.get('text') else ''}
-        </div>
-        """
-        
-        folium.Marker(
-            location=[lat, lon],
-            popup=folium.Popup(popup_html, max_width=320),
-            icon=folium.Icon(color=icon_color, icon='camera', prefix='fa'),
-            tooltip=f"{sender_name} - {timestamp}"
-        ).add_to(m)
-    
-    st_folium(m, width=None, height=600)
-    
-    st.markdown("---")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("📍 Total localisations", len(geolocated_messages))
-    
-    with col2:
-        admin_count = len([m for m in geolocated_messages if m['sender'] == 'admin'])
-        st.metric("🔵 Le cousin", admin_count)
-    
-    with col3:
-        user_count = len([m for m in geolocated_messages if m['sender'] == 'user'])
-        st.metric("🔴 La cousine", user_count)
-
 def load_counters():
     """Charge les compteurs depuis GitHub"""
     file_data = github_get_file(DATA_FILE)
@@ -401,9 +302,6 @@ def load_messages():
                     img_data = base64.b64decode(msg['original_image_b64'])
                     msg['original_image'] = Image.open(io.BytesIO(img_data))
                 
-                if 'location' not in msg:
-                    msg['location'] = None
-
                 messages.append(msg)
                 
             except Exception as e:
@@ -414,8 +312,15 @@ def load_messages():
     except Exception as e:
         return []
 
+def cleanup_old_messages(max_messages=50):
+    """Garde seulement les N derniers messages"""
+    if len(st.session_state.messages) > max_messages:
+        st.session_state.messages = st.session_state.messages[-max_messages:]
+        return True
+    return False
+
 def save_messages():
-    """Sauvegarde les messages sur GitHub"""
+    """Sauvegarde les messages sur GitHub avec compression optimale"""
     try:
         messages_to_save = []
         for msg in st.session_state.messages:
@@ -423,18 +328,21 @@ def save_messages():
                 'timestamp': msg['timestamp'],
                 'text': msg['text'],
                 'sender': msg['sender'],
-                'id': msg['id'],
-                'location': msg.get('location')  # ✅ AJOUT
+                'id': msg['id']
             }
             
             if 'image_with_text' in msg:
                 img_bytes = io.BytesIO()
-                msg['image_with_text'].save(img_bytes, format='PNG', optimize=True, compress_level=6)
+                # Convertir en JPEG pour réduire la taille (qualité 85%)
+                img_to_save = msg['image_with_text'].convert('RGB')
+                img_to_save.save(img_bytes, format='JPEG', quality=85, optimize=True)
                 msg_copy['image_with_text_b64'] = base64.b64encode(img_bytes.getvalue()).decode()
             
             if 'original_image' in msg:
                 img_bytes = io.BytesIO()
-                msg['original_image'].save(img_bytes, format='PNG', optimize=True, compress_level=6)
+                # Convertir en JPEG pour réduire la taille
+                img_to_save = msg['original_image'].convert('RGB')
+                img_to_save.save(img_bytes, format='JPEG', quality=85, optimize=True)
                 msg_copy['original_image_b64'] = base64.b64encode(img_bytes.getvalue()).decode()
             
             messages_to_save.append(msg_copy)
@@ -445,10 +353,26 @@ def save_messages():
             'counters': st.session_state.counters
         }
         
+        json_content = json.dumps(data, indent=2)
+        
+        # Vérifier la taille avant d'envoyer
+        size_mb = len(json_content.encode('utf-8')) / (1024 * 1024)
+        
+        if size_mb > 90:  # Limite GitHub ~100MB
+            st.error(f"❌ Fichier trop gros ({size_mb:.1f}MB). Supprimez d'anciens messages.")
+            return False
+        
         file_data = github_get_file(DATA_FILE)
         sha = file_data['sha'] if file_data else None
         
-        return github_update_file(DATA_FILE, json.dumps(data, indent=2), sha, "Update messages")
+        success = github_update_file(DATA_FILE, json_content, sha, "Update messages")
+        
+        if success:
+            st.sidebar.success(f"✅ Sauvegarde OK ({size_mb:.1f}MB)")
+        else:
+            st.sidebar.error("❌ Échec sauvegarde")
+        
+        return success
         
     except Exception as e:
         st.error(f"Erreur sauvegarde: {str(e)}")
@@ -474,51 +398,23 @@ def send_telegram_notification(sender, has_text):
     try:
         import random
         
-        messages_admin = [
-            "📸 Nouveau message de ta cousine préférée !",
-            "✨ une beauté absolue vient de poster une photo !",
-            "🎉 Regarde ! une vision de paradie vient d'apparaitre !",
-            "💌 Tu as reçu un message de la femme de ta vie !",
-            "🔔 Ding dong ! tu as enfin reçu ce que tu attendais tout ce temps !",
-            "📬 Viens voir cette pepite qui vient d'arriver !",
-            "🌟 une beauté absolue pense à toi !",
-            "💕 Message tout frais de ta cousine préférée !",
-            "🎨 une beauté absolue partage un moment avec toi !",
-            "🚀 Un message arrive en direction de ton coeur !",
-            "Arrete d'esperer c'est ta cousine ! il y aura rien de plus !",
-            "Attend au moins la fin de ton cours pour voir ce message",
-            "Assis toi pour pas tomber par terre face a une tel beautée",
-            "C'est bon tu vas passer une bonne journnée grace à ce message",
-            "Baisse ta luminositée, tu vas être éblouie",
-        ]
+        sender_name = "un homme grandiose" if sender == "admin" else "une beauté absolue"
         
-        messages_user = [
-            "📸 Nouveau message de ton homme !",
-            "✨ un homme grandiose vient de poster une photo !",
-            "🎉 Regarde ! un être malicieux a envoyé quelque chose !",
-            "💌 Tu as reçu un message rempli d'affection !",
-            "🔔 Ding dong ! C'est encore et toujours moi !",
-            "📬 Nouveau dans la boîte : tu l'attendais et il est enfin là !",
-            "🌟 un homme grandiose pense (encore et toujours) à toi !",
-            "💕 Message tout frais de ton plus grand fan !",
-            "🎨 ton cousin PREFERE partage un instant de sa vie avec toi !",
-            "🚀 Message en approche de ton future mari !",
-            "Ton impatience de voir ce message est palpable",
-            "On espère que ta famille ne tombera pas sur ce message",
-            "Si tu réagie comme ça a chaque notif tes potes vont se poser des questions",
-            "C'est pour toi bébou... il a encore pensé a toi !",
-            "Viens voir ce corps d'apollon",
-        ]
-        
-        if sender == "admin":
-            base_message = random.choice(messages_user)
+        if text and text.strip():
+            # Limiter à 100 caractères pour ne pas surcharger la notif
+            text_preview = text.strip()
+            if len(text_preview) > 20:
+                text_preview = text_preview[:20] + "..."
+
+            message = f"{text_preview}\"</i>"
         else:
-            base_message = random.choice(messages_admin)
+            message = f"Photo"
         
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         response = requests.post(url, json={
             "chat_id": TELEGRAM_GROUP_CHAT_ID,
-            "text": base_message
+            "text": message
+            "parse_mode": "HTML" 
         }, timeout=5)
         
         return response.status_code == 200
@@ -533,12 +429,14 @@ def reload_heavy_libraries():
         import importlib
         import sys
         
+        # Recharger OpenCV
         if 'cv2' in sys.modules:
             del sys.modules['cv2']
         import cv2
         import numpy as np
         CV2_AVAILABLE = True
         
+        # Recharger MediaPipe
         if 'mediapipe' in sys.modules:
             del sys.modules['mediapipe']
         import mediapipe as mp
@@ -569,10 +467,6 @@ if 'notification_enabled' not in st.session_state:
     st.session_state.notification_enabled = False
 if 'counters' not in st.session_state:
     st.session_state.counters = load_counters()
-if 'last_gps_location' not in st.session_state:
-    st.session_state.last_gps_location = None
-if 'gps_auto_enabled' not in st.session_state:
-    st.session_state.gps_auto_enabled = True
 
 def verify_human_body_simple(image):
     """Vérifie la présence d'un corps humain avec OpenCV + MediaPipe"""
@@ -639,8 +533,10 @@ def add_text_to_image(image, text):
     if not text or text.strip() == "":
         return image
     
+    # Travail direct sur l'image (pas d'upscaling)
     img_copy = image.copy()
     
+    # Convertir en RGBA pour la transparence
     if img_copy.mode != 'RGBA':
         img_copy = img_copy.convert('RGBA')
     
@@ -648,8 +544,11 @@ def add_text_to_image(image, text):
     draw = ImageDraw.Draw(txt_layer)
     
     width, height = img_copy.size
-    font_size = max(int(height * 0.04), 20)
     
+    # Taille de police adaptée (minimum 20px pour lisibilité)
+    font_size = max(int(height * 0.02), 20)
+    
+    # Chargement de la police
     font = None
     font_paths = [
         "C:/Windows/Fonts/seguiemj.ttf",
@@ -672,6 +571,7 @@ def add_text_to_image(image, text):
     if font is None:
         font = ImageFont.load_default()
     
+    # Découpage du texte en lignes
     max_width = width * 0.85
     lines = []
     words = text.split()
@@ -695,6 +595,7 @@ def add_text_to_image(image, text):
     if current_line:
         lines.append(current_line)
     
+    # Gestion des lignes trop longues
     final_lines = []
     for line in lines:
         try:
@@ -713,6 +614,7 @@ def add_text_to_image(image, text):
     line_height = font_size * 1.4
     total_text_height = len(final_lines) * line_height
     
+    # Réduction si trop de lignes
     if len(final_lines) > 5:
         font_size = max(int(height * 0.03), 16)
         try:
@@ -727,6 +629,7 @@ def add_text_to_image(image, text):
     
     padding = int(font_size * 0.8)
     
+    # Calcul largeur maximale
     max_line_width = 0
     for line in final_lines:
         try:
@@ -736,6 +639,7 @@ def add_text_to_image(image, text):
             line_width = len(line) * (font_size // 2)
         max_line_width = max(max_line_width, line_width)
     
+    # Positionnement
     rect_width = max_line_width + padding * 2
     rect_height = total_text_height + padding * 2
     x = (width - rect_width) // 2
@@ -744,6 +648,7 @@ def add_text_to_image(image, text):
     rect = [x, y, x + rect_width, y + rect_height]
     radius = padding
     
+    # Ombre portée (réduite pour plus de netteté)
     shadow_offset = 4
     shadow = Image.new('RGBA', img_copy.size, (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow)
@@ -756,9 +661,11 @@ def add_text_to_image(image, text):
     txt_layer = Image.alpha_composite(txt_layer, shadow)
     draw = ImageDraw.Draw(txt_layer)
     
+    # Boîte de texte
     draw.rounded_rectangle(rect, radius=radius, fill=(20, 20, 20, 230))
     draw.rounded_rectangle(rect, radius=radius, outline=(255, 255, 255, 180), width=2)
     
+    # Dessin du texte ligne par ligne
     current_y = y + padding
     for line in final_lines:
         try:
@@ -769,6 +676,7 @@ def add_text_to_image(image, text):
         
         line_x = x + (rect_width - line_width) // 2
         
+        # Contour noir (même technique que l'original)
         for offset in [(1, 1), (-1, 1), (1, -1), (-1, -1), (0, 2), (2, 0)]:
             try:
                 draw.text(
@@ -786,6 +694,7 @@ def add_text_to_image(image, text):
                     fill=(0, 0, 0, 200)
                 )
         
+        # Texte blanc
         try:
             draw.text(
                 (line_x, current_y), 
@@ -804,58 +713,11 @@ def add_text_to_image(image, text):
         
         current_y += line_height
     
+    # Composite final
     img_copy = Image.alpha_composite(img_copy, txt_layer)
     img_copy = img_copy.convert('RGB')
     
     return img_copy
-
-def extract_gps_from_image(image):
-    """Extrait les coordonnées GPS des métadonnées EXIF de l'image"""
-    try:
-        from PIL.ExifTags import TAGS, GPSTAGS
-        
-        exif = image._getexif()
-        if not exif:
-            return None
-        
-        gps_info = {}
-        for tag, value in exif.items():
-            tag_name = TAGS.get(tag, tag)
-            if tag_name == 'GPSInfo':
-                for gps_tag in value:
-                    gps_tag_name = GPSTAGS.get(gps_tag, gps_tag)
-                    gps_info[gps_tag_name] = value[gps_tag]
-        
-        if not gps_info:
-            return None
-        
-        # Convertir les coordonnées GPS en décimal
-        def convert_to_degrees(value):
-            d = float(value[0])
-            m = float(value[1])
-            s = float(value[2])
-            return d + (m / 60.0) + (s / 3600.0)
-        
-        lat = convert_to_degrees(gps_info.get('GPSLatitude', [0, 0, 0]))
-        lat_ref = gps_info.get('GPSLatitudeRef', 'N')
-        if lat_ref == 'S':
-            lat = -lat
-        
-        lon = convert_to_degrees(gps_info.get('GPSLongitude', [0, 0, 0]))
-        lon_ref = gps_info.get('GPSLongitudeRef', 'E')
-        if lon_ref == 'W':
-            lon = -lon
-        
-        if lat == 0.0 and lon == 0.0:
-            return None
-        
-        return {
-            'latitude': lat,
-            'longitude': lon
-        }
-        
-    except Exception as e:
-        return None
 
 def increment_counter(user):
     """Incrémente le compteur de l'utilisateur avec animation"""
@@ -870,32 +732,44 @@ def increment_counter(user):
     elif counter_value % 5 == 0:
         st.success(f"🌟 **{counter_value} messages** ! Continue comme ça ! 🌟")
 
-def save_message(image, text, original_image, sender, location=None):
-    """Sauvegarde un message avec coordonnées GPS optionnelles"""
+def save_message(image, text, original_image, sender):
+    """Sauvegarde un message"""
     message = {
         'timestamp': datetime.now().isoformat(),
         'text': text,
         'image_with_text': image,
         'original_image': original_image,
         'sender': sender,
-        'id': int(datetime.now().timestamp() * 1000),
-        'location': location
+        'id': int(datetime.now().timestamp() * 1000)
     }
     st.session_state.messages.append(message)
     increment_counter(sender)
-    save_messages()
-    send_telegram_notification(sender, bool(text))
+    
+    # Nettoyer si trop de messages
+    if cleanup_old_messages(max_messages=50)
+  
+    
+    # Sauvegarder
+    success = save_messages()
+    
+    if success:
+        send_telegram_notification(sender, text)
+    else:
+        st.error("⚠️ Photo non sauvegardée - fichier trop gros")
 
 def delete_message(message_id):
     """Supprime un message et décrémente le compteur"""
+    # Trouver le message à supprimer pour récupérer l'expéditeur
     message_to_delete = None
     for msg in st.session_state.messages:
         if msg['id'] == message_id:
             message_to_delete = msg
             break
     
+    # Supprimer le message
     st.session_state.messages = [msg for msg in st.session_state.messages if msg['id'] != message_id]
     
+    # Décrémenter le compteur de l'expéditeur
     if message_to_delete:
         sender = message_to_delete['sender']
         if sender in st.session_state.counters and st.session_state.counters[sender] > 0:
@@ -1024,109 +898,91 @@ def admin_panel():
             st.sidebar.success("✅ Ajouté")
             st.rerun()
 
-def messagerie_tab():
-    """Onglet de messagerie"""
+def main_app():
+    """Application principale"""
+    st.title("📸 Messagerie Photo")
+
+    display_counters()
+    
+    with st.sidebar:
+        st.write(f"OpenCV disponible : **{'✅' if CV2_AVAILABLE else '❌'}**")
+        if CV2_AVAILABLE:
+            try:
+                st.write(f"OpenCV version : **{cv2.__version__}**")
+            except:
+                st.write("⚠️ OpenCV importé mais version inaccessible")
+    
+        st.write(f"MediaPipe disponible : **{'✅' if MEDIAPIPE_AVAILABLE else '❌'}**")
+        if MEDIAPIPE_AVAILABLE:
+            try:
+                st.write(f"MediaPipe version : **{mp.__version__}**")
+            except:
+                st.write("⚠️ MediaPipe importé mais version inaccessible")
+    
+        st.write(f"Numpy disponible : **{'✅' if 'np' in dir() else '❌'}**")
+        if 'np' in dir():
+            try:
+                st.write(f"Numpy version : **{np.__version__}**")
+            except:
+                pass
+        #st.write("### 🐛 Debug Telegram")
+        #st.write(f"Bot Token configuré : **{'✅ Oui' if TELEGRAM_BOT_TOKEN else '❌ Non'}**")
+        #st.write(f"Chat ID configuré : **{'✅ Oui' if TELEGRAM_GROUP_CHAT_ID else '❌ Non'}**")
+    
+        #if TELEGRAM_BOT_TOKEN:
+            #st.write(f"Token (10 premiers chars) : `{TELEGRAM_BOT_TOKEN[:10]}...`")
+        #if TELEGRAM_GROUP_CHAT_ID:
+            #st.write(f"Chat ID : `{TELEGRAM_GROUP_CHAT_ID}`")
+    
+    # Bouton de test
+        #if st.button("🧪 Tester notification"):
+            #result = send_telegram_notification("admin", True)
+            #if result:
+                #st.success("✅ Notification envoyée !")
+            #else:
+                #st.error("❌ Échec de l'envoi")
+
+        st.write("### 📊 État du système")
+        st.write(f"Messages en mémoire : **{len(st.session_state.messages)}**")
+        st.write(f"GitHub : **{'✅ Configuré' if GITHUB_TOKEN and GITHUB_REPO else '❌ Non configuré'}**")
+        st.write(f"OpenCV : **{'✅' if CV2_AVAILABLE else '❌'}**")
+        st.write(f"MediaPipe : **{'✅' if MEDIAPIPE_AVAILABLE else '❌'}**")
+
+        if not CV2_AVAILABLE or not MEDIAPIPE_AVAILABLE:
+            st.warning("⚠️ Bibliothèques non chargées")
+            if st.button("🔄 Recharger les bibliothèques"):
+                with st.spinner("Rechargement..."):
+                    if reload_heavy_libraries():
+                        st.success("✅ Rechargées avec succès !")
+                        st.rerun()
+                    else:
+                        st.error("❌ Échec du rechargement")
+        
+        if st.button("🔄 Recharger depuis GitHub"):
+            st.session_state.messages = load_messages()
+            st.session_state.user_passwords = load_passwords()
+            st.session_state.counters = load_counters()
+            st.rerun()
     
     check_new_messages()
     
+    col1, col2 = st.columns([5, 1])
+    with col2:
+        if st.button("🚪"):
+            st.session_state.authenticated = False
+            st.session_state.is_admin = False
+            st.session_state.current_user = None
+            st.rerun()
+    
+    if st.session_state.is_admin:
+        admin_panel()
+    
     st.header("📤 Nouveau message")
     
-    # Géolocalisation automatique via JavaScript
-    st.markdown("""
-    <div id="gps-status" style="padding: 10px; background: rgba(255,255,255,0.1); border-radius: 10px; color: white; text-align: center; font-size: 14px; margin-bottom: 15px;">
-        📍 <span id="gps-text">Tentative de géolocalisation...</span>
-    </div>
-    <script>
-    (function() {
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                function(position) {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-                    const acc = Math.round(position.coords.accuracy);
-                    
-                    document.getElementById('gps-text').innerHTML = 
-                        '✅ Position capturée : ' + lat.toFixed(4) + ', ' + lon.toFixed(4) + ' (±' + acc + 'm)';
-                    
-                    // Stocker dans localStorage pour que Streamlit puisse le récupérer
-                    localStorage.setItem('gps_latitude', lat);
-                    localStorage.setItem('gps_longitude', lon);
-                    localStorage.setItem('gps_timestamp', Date.now());
-                },
-                function(error) {
-                    let errorMsg = '';
-                    switch(error.code) {
-                        case error.PERMISSION_DENIED:
-                            errorMsg = '❌ Permission refusée. Autorisez la géolocalisation dans votre navigateur.';
-                            break;
-                        case error.POSITION_UNAVAILABLE:
-                            errorMsg = '⚠️ Position indisponible. Vérifiez votre GPS.';
-                            break;
-                        case error.TIMEOUT:
-                            errorMsg = '⏱️ Délai expiré. Réessayez.';
-                            break;
-                    }
-                    document.getElementById('gps-text').innerHTML = errorMsg;
-                    localStorage.removeItem('gps_latitude');
-                    localStorage.removeItem('gps_longitude');
-                },
-                {
-                    enableHighAccuracy: true,
-                    timeout: 15000,
-                    maximumAge: 60000
-                }
-            );
-        } else {
-            document.getElementById('gps-text').innerHTML = '❌ Géolocalisation non supportée par ce navigateur.';
-        }
-    })();
-    </script>
-    """, unsafe_allow_html=True)
-    
-    # Option pour désactiver ou entrer manuellement
-    with st.expander("⚙️ Options de géolocalisation", expanded=False):
-        st.info("""
-        **Mode automatique** : La position GPS est capturée automatiquement par votre navigateur.
-        
-        **Mode manuel** : Entrez vos coordonnées manuellement (clic droit sur Google Maps).
-        
-        **Désactivé** : Aucune position ne sera enregistrée.
-        """)
-        
-        gps_option = st.radio(
-            "Mode GPS",
-            ["Automatique (recommandé)", "Manuel", "Désactivé"],
-            key="gps_mode_radio",
-            horizontal=True
-        )
-        
-        if gps_option == "Manuel":
-            col_lat, col_lon = st.columns(2)
-            with col_lat:
-                manual_lat = st.number_input("Latitude", value=0.0, format="%.6f", step=0.000001, key="manual_lat_input")
-            with col_lon:
-                manual_lon = st.number_input("Longitude", value=0.0, format="%.6f", step=0.000001, key="manual_lon_input")
-    
-    camera_photo = st.file_uploader(
-    "📸 Prendre ou choisir une photo", 
-    type=['jpg', 'jpeg', 'png'],
-    label_visibility="collapsed",
-    key="photo_uploader",
-    accept_multiple_files=False
-    )
+    camera_photo = st.camera_input("📸 Prendre une photo", label_visibility="collapsed")
     
     if camera_photo is not None:
         image = Image.open(camera_photo)
-
-        auto_gps = extract_gps_from_image(image)
-
-        st.session_state.auto_gps = auto_gps
-    
-    if auto_gps:
-        st.success(f"📍 Position GPS détectée automatiquement : {auto_gps['latitude']:.6f}, {auto_gps['longitude']:.6f}")
-    else:
-        st.info("ℹ️ Aucune donnée GPS trouvée dans cette photo. Assurez-vous que la localisation est activée sur votre appareil.")
-    
         
         has_human = True
         if CV2_AVAILABLE:
@@ -1136,36 +992,11 @@ def messagerie_tab():
         if not has_human:
             st.error("❌ La photo doit contenir une partie du corps humain")
         else:
-            text_input = st.text_input("", key="text_msg_input", placeholder="💬 Ajouter un message...", label_visibility="collapsed")
+            text_input = st.text_input("", key="text_msg", placeholder="💬 Ajouter un message...", label_visibility="collapsed")
             
-            st.info("📍 Si votre photo contient des données GPS, elles seront détectées automatiquement.")
-            
-            if st.button("✉️ Envoyer", type="primary", use_container_width=True, key="send_msg_btn"):
+            if st.button("✉️ Envoyer", type="primary", use_container_width=True):
                 image_with_text = add_text_to_image(image, text_input) if text_input else image
-                
-                # Récupérer la position GPS selon le mode choisi
-                location = None
-                gps_mode = st.session_state.get('gps_mode_radio', 'Automatique (recommandé)')
-
-                if gps_mode == "Automatique (recommandé)":
-                    # Utiliser les GPS extraits des EXIF
-                    location = st.session_state.get('auto_gps', None)
-                    if location:
-                        st.success(f"✅ Position enregistrée : {location['latitude']:.4f}, {location['longitude']:.4f}")
-                    else:
-                        st.warning("⚠️ Aucune position GPS détectée dans la photo")
-                
-                if gps_mode == "Manuel":
-                    manual_lat = st.session_state.get('manual_lat_input', 0.0)
-                    manual_lon = st.session_state.get('manual_lon_input', 0.0)
-                    if manual_lat != 0.0 or manual_lon != 0.0:
-                        location = {'latitude': manual_lat, 'longitude': manual_lon}
-                
-
-                # Mode "Désactivé" : location reste None
-                
-                save_message(image_with_text, text_input, image, st.session_state.current_user, location)
-                
+                save_message(image_with_text, text_input, image, st.session_state.current_user)
                 st.success("✅ Envoyé !")
                 st.rerun()
     
@@ -1180,12 +1011,6 @@ def messagerie_tab():
             
             timestamp = datetime.fromisoformat(msg['timestamp']).strftime('%d/%m %H:%M')
             st.write(f"**{timestamp}**")
-            
-            # Afficher l'icône GPS si géolocalisé
-            if msg.get('location'):
-                lat = msg['location']['latitude']
-                lon = msg['location']['longitude']
-                st.caption(f"📍 {lat:.4f}, {lon:.4f}")
             
             st.image(msg['image_with_text'], use_container_width=True)
             
@@ -1203,58 +1028,6 @@ def messagerie_tab():
             st.divider()
     else:
         st.info("Aucun message")
-
-def main_app():
-    """Application principale"""
-    st.title("📸 Messagerie Photo")
-
-    display_counters()
-    
-    # Bouton de déconnexion en haut à droite
-    col1, col2 = st.columns([5, 1])
-    with col2:
-        if st.button("🚪", key="logout_btn"):
-            st.session_state.authenticated = False
-            st.session_state.is_admin = False
-            st.session_state.current_user = None
-            st.rerun()
-    
-    # Système d'onglets
-    tab1, tab2 = st.tabs(["💬 Messagerie", "🗺️ Carte"])
-    
-    with tab1:
-        messagerie_tab()
-    
-    with tab2:
-        create_map_view()
-
-    # Sidebar
-    with st.sidebar:
-        if st.session_state.is_admin:
-            admin_panel()
-            st.markdown("---")
-        
-        st.write("### 📊 État du système")
-        st.write(f"Messages en mémoire : **{len(st.session_state.messages)}**")
-        st.write(f"GitHub : **{'✅ Configuré' if GITHUB_TOKEN and GITHUB_REPO else '❌ Non configuré'}**")
-        st.write(f"OpenCV : **{'✅' if CV2_AVAILABLE else '❌'}**")
-        st.write(f"MediaPipe : **{'✅' if MEDIAPIPE_AVAILABLE else '❌'}**")
-
-        if not CV2_AVAILABLE or not MEDIAPIPE_AVAILABLE:
-            st.warning("⚠️ Bibliothèques non chargées")
-            if st.button("🔄 Recharger les bibliothèques", key="reload_libs_btn"):
-                with st.spinner("Rechargement..."):
-                    if reload_heavy_libraries():
-                        st.success("✅ Rechargées avec succès !")
-                        st.rerun()
-                    else:
-                        st.error("❌ Échec du rechargement")
-        
-        if st.button("🔄 Recharger depuis GitHub", key="reload_github_btn"):
-            st.session_state.messages = load_messages()
-            st.session_state.user_passwords = load_passwords()
-            st.session_state.counters = load_counters()
-            st.rerun()
 
 if not st.session_state.authenticated:
     login_page()
