@@ -742,7 +742,8 @@ def save_message(image, text, original_image, sender):
     increment_counter(sender)
     
     # Nettoyer si trop de messages
-    if cleanup_old_messages(max_messages=50)
+    if cleanup_old_messages(max_messages=50):
+        st.info("🗑️ Messages anciens supprimés automatiquement")
   
     
     # Sauvegarder
